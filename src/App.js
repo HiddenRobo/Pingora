@@ -143,7 +143,7 @@ function App() {
           <div style={S.topBar}>
             <div style={S.topTitle}>
               <span style={{ fontSize: 22 }}>💬</span>
-              <span style={S.topTitleText}>ChatApp</span>
+              <span style={S.topTitleText}>Pingora</span>
             </div>
             {notifPermission !== "granted" && (
               <button
@@ -273,7 +273,7 @@ function LandingScreen({ onReady }) {
   return (
     <div style={LS.wrap} onClick={onReady}>
       <div style={{ ...LS.logo, opacity: step >= 1 ? 1 : 0, transform: step >= 1 ? "scale(1)" : "scale(0.3)" }}>💬</div>
-      <div style={{ ...LS.title, opacity: step >= 2 ? 1 : 0, transform: step >= 2 ? "translateY(0)" : "translateY(20px)" }}>ChatApp</div>
+      <div style={{ ...LS.title, opacity: step >= 2 ? 1 : 0, transform: step >= 2 ? "translateY(0)" : "translateY(20px)" }}>Pingora</div>
       <div style={{ ...LS.sub, opacity: step >= 3 ? 1 : 0 }}>Private • Secure • Real-time</div>
       <div style={{ ...LS.dots, opacity: step >= 3 ? 1 : 0 }}>
         {[0, 0.2, 0.4].map((d, i) => <span key={i} style={{ ...LS.dot, animationDelay: `${d}s` }} />)}
