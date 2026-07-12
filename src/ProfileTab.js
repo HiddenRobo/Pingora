@@ -58,7 +58,7 @@ function ProfileTab({ user, onEditProfile, onLogout, notifPermission, onEnableNo
           🚪 Logout
         </button>
 
-        <div style={PT.footer}>ChatApp v1.0 • Made with ❤️</div>
+        <div style={PT.footer}>Pingora v1.0 • Made by Mr_Faruqui ❤️</div>
       </div>
     </div>
   );
