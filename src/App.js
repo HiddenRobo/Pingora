@@ -268,7 +268,7 @@ function LandingScreen({ onReady }) {
       document.removeEventListener("click", handleTap);
       document.removeEventListener("touchstart", handleTap);
     };
-  }, []);
+  }, [onReady]);
 
   return (
     <div style={LS.wrap} onClick={onReady}>
