@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { db } from "./firebase";
 import { ref, push, onValue, update, remove } from "firebase/database";
+import { useTheme } from "./ThemeContext";
 
 const EMOJI_CATEGORIES = {
   "😊 Smileys": ["😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚","😋","😛","😝","😜","🤪","🤨","🧐","🤓","😎","🥸","🤩","🥳","😏","😒","😞","😔","😟","😕","🙁","☹️","😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","😓"],
@@ -19,7 +20,9 @@ function PrivateChat({ currentUser, selectedUser, onBack }) {
   const [activeCategory, setActiveCategory] = useState("😊 Smileys");
   const [uploading, setUploading] = useState(false);
   const [previewImg, setPreviewImg] = useState(null);
-  const [selectedMsg, setSelectedMsg] = useState(null); // selected message for delete
+  const [selectedMsg, setSelectedMsg] = useState(null);
+  const { isDark } = useTheme();
+  const T = isDark ? dark : light;
 
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
@@ -35,8 +38,7 @@ function PrivateChat({ currentUser, selectedUser, onBack }) {
     const unsub = onValue(ref(db, "chats/" + chatId), (snap) => {
       const data = snap.val();
       if (data) {
-        const list = Object.entries(data)
-          .map(([key, val]) => ({ ...val, key }))
+        const list = Object.entries(data).map(([key, val]) => ({ ...val, key }))
           .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         setMessages(list);
       } else setMessages([]);
@@ -51,43 +53,46 @@ function PrivateChat({ currentUser, selectedUser, onBack }) {
     return () => unsub();
   }, [otherUid]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   useEffect(() => {
     const unseen = messages.filter(m => m.sender === otherUid && m.status !== "seen");
-    unseen.forEach(m => {
-      update(ref(db, `chats/${chatId}/${m.key}`), { status: "seen" });
-    });
+    unseen.forEach(m => update(ref(db, `chats/${chatId}/${m.key}`), { status: "seen" }));
   }, [messages, otherUid, chatId]);
 
   useEffect(() => {
     const handleClick = (e) => {
-      if (emojiRef.current && !emojiRef.current.contains(e.target)) {
-        setShowEmoji(false);
-      }
+      if (emojiRef.current && !emojiRef.current.contains(e.target)) setShowEmoji(false);
     };
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("touchstart", handleClick);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("touchstart", handleClick);
-    };
+    return () => { document.removeEventListener("mousedown", handleClick); document.removeEventListener("touchstart", handleClick); };
   }, []);
+
+  const handlePressStart = (msg) => {
+    if (msg.sender !== myUid) return;
+    longPressTimer.current = setTimeout(() => setSelectedMsg(msg), 500);
+  };
+  const handlePressEnd = () => { if (longPressTimer.current) clearTimeout(longPressTimer.current); };
+
+  const deleteMessage = async (forEveryone) => {
+    if (!selectedMsg) return;
+    try {
+      if (forEveryone) await remove(ref(db, `chats/${chatId}/${selectedMsg.key}`));
+      else await update(ref(db, `chats/${chatId}/${selectedMsg.key}`), { deletedFor: myUid, text: "" });
+    } catch (err) { alert("Delete nahi hua: " + err.message); }
+    setSelectedMsg(null);
+  };
 
   const sendMessage = () => {
     const text = newMessage.trim();
     if (!text) return;
     push(ref(db, "chats/" + chatId), {
-      text, sender: myUid,
-      senderName: currentUser.displayName,
+      text, sender: myUid, senderName: currentUser.displayName,
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       timestamp: Date.now(), status: "sent", type: "text"
     });
-    setNewMessage("");
-    setShowEmoji(false);
-    inputRef.current?.focus();
+    setNewMessage(""); setShowEmoji(false); inputRef.current?.focus();
   };
 
   const handleImageUpload = async (e) => {
@@ -109,56 +114,17 @@ function PrivateChat({ currentUser, selectedUser, onBack }) {
           time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           timestamp: Date.now(), status: "sent", type: "image"
         });
-      } else alert("Upload failed.");
-    } catch (err) { alert("Upload error: " + err.message); }
-    setUploading(false);
-    e.target.value = "";
-  };
-
-  const addEmoji = (emoji) => {
-    setNewMessage(prev => prev + emoji);
-    inputRef.current?.focus();
-  };
-
-  // ── Long press handlers ──
-  const handleLongPressStart = (msg) => {
-    // Sirf apne messages pe delete allow karo
-    if (msg.sender !== myUid) return;
-    longPressTimer.current = setTimeout(() => {
-      setSelectedMsg(msg);
-    }, 500); // 500ms long press
-  };
-
-  const handleLongPressEnd = () => {
-    clearTimeout(longPressTimer.current);
-  };
-
-  // ── Delete message ──
-  const deleteMessage = async (forEveryone = false) => {
-    if (!selectedMsg) return;
-    try {
-      if (forEveryone) {
-        // Sab ke liye delete — Firebase se remove
-        await remove(ref(db, `chats/${chatId}/${selectedMsg.key}`));
-      } else {
-        // Sirf apne liye — "deleted" mark karo
-        await update(ref(db, `chats/${chatId}/${selectedMsg.key}`), {
-          deletedFor: { [myUid]: true }
-        });
       }
-    } catch (err) {
-      alert("Delete error: " + err.message);
-    }
-    setSelectedMsg(null);
+    } catch (err) { alert("Upload error: " + err.message); }
+    setUploading(false); e.target.value = "";
   };
 
   const grouped = messages.map((msg, i) => ({
-    ...msg,
-    isSameSender: i > 0 && messages[i - 1].sender === msg.sender
+    ...msg, isSameSender: i > 0 && messages[i - 1].sender === msg.sender
   }));
 
   return (
-    <div style={S.root}>
+    <div style={{ ...S.root, background: T.bg }}>
 
       {/* HEADER */}
       <div style={S.header}>
@@ -185,30 +151,27 @@ function PrivateChat({ currentUser, selectedUser, onBack }) {
         {messages.length === 0 && (
           <div style={S.empty}>
             <span style={{ fontSize: 44 }}>👋</span>
-            <span style={{ fontWeight: 600, color: "#555" }}>{selectedUser.name}</span>
-            <span style={{ fontSize: 13, color: "#aaa" }}>Pehla message bhejo!</span>
+            <span style={{ fontWeight: 600, color: T.text }}>{selectedUser.name}</span>
+            <span style={{ fontSize: 13, color: T.sub }}>Pehla message bhejo!</span>
           </div>
         )}
-
         {grouped.map((msg, i) => {
           const isMe = msg.sender === myUid;
           const isImage = msg.type === "image" && msg.imageUrl;
-          const isDeletedForMe = msg.deletedFor?.[myUid];
+          const isDeleted = msg.deletedFor === myUid;
           const isSelected = selectedMsg?.key === msg.key;
-
-          // Sirf apne liye deleted messages hide karo
-          if (isDeletedForMe) return null;
+          if (isDeleted && !msg.imageUrl) return null;
 
           return (
             <div key={msg.key || i} style={{
-              display: "flex",
-              justifyContent: isMe ? "flex-end" : "flex-start",
-              alignItems: "flex-end",
-              gap: 6,
+              display: "flex", justifyContent: isMe ? "flex-end" : "flex-start",
+              alignItems: "flex-end", gap: 6,
               marginTop: msg.isSameSender ? 2 : 10,
-              paddingLeft: isMe ? 52 : 0,
-              paddingRight: isMe ? 0 : 52,
-            }}>
+              paddingLeft: isMe ? 52 : 0, paddingRight: isMe ? 0 : 52,
+            }}
+              onMouseDown={() => handlePressStart(msg)} onMouseUp={handlePressEnd} onMouseLeave={handlePressEnd}
+              onTouchStart={() => handlePressStart(msg)} onTouchEnd={handlePressEnd}
+            >
               {!isMe && (
                 <div style={{ width: 30, flexShrink: 0 }}>
                   {!msg.isSameSender && (
@@ -221,56 +184,32 @@ function PrivateChat({ currentUser, selectedUser, onBack }) {
                 </div>
               )}
 
-              {/* Image message */}
               {isImage ? (
-                <div
-                  style={{
-                    ...S.imageBubble,
-                    borderRadius: isMe ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
-                    boxShadow: isSelected
-                      ? "0 0 0 3px #0084ff"
-                      : isMe ? "0 2px 8px rgba(0,100,255,.25)" : "0 1px 4px rgba(0,0,0,.12)",
-                    opacity: isSelected ? 0.85 : 1,
-                  }}
-                  onMouseDown={() => handleLongPressStart(msg)}
-                  onMouseUp={handleLongPressEnd}
-                  onTouchStart={() => handleLongPressStart(msg)}
-                  onTouchEnd={handleLongPressEnd}
-                >
-                  <img
-                    src={msg.imageUrl} alt="shared"
-                    style={S.sharedImg}
-                    onClick={() => !selectedMsg && setPreviewImg(msg.imageUrl)}
-                  />
+                <div style={{
+                  ...S.imageBubble,
+                  background: T.card,
+                  borderRadius: isMe ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+                  boxShadow: isSelected ? "0 0 0 3px #ff4444" : "0 1px 4px rgba(0,0,0,.15)"
+                }}>
+                  <img src={msg.imageUrl} alt="shared" style={S.sharedImg} onClick={() => !selectedMsg && setPreviewImg(msg.imageUrl)} />
                   <div style={{ ...S.imgTime, justifyContent: isMe ? "flex-end" : "flex-start" }}>
-                    <span style={{ color: "#aaa", fontSize: 10 }}>{msg.time}</span>
+                    <span style={{ color: T.sub, fontSize: 10 }}>{msg.time}</span>
                     {isMe && <Ticks status={msg.status} />}
                   </div>
                 </div>
               ) : (
-                /* Text message */
-                <div
-                  style={{
-                    ...S.bubble,
-                    background: isSelected
-                      ? (isMe ? "#0060cc" : "#d8e4ff")
-                      : isMe ? "linear-gradient(135deg,#0084ff,#0052cc)" : "#fff",
-                    color: isMe ? "#fff" : "#111",
-                    borderRadius: isMe ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
-                    boxShadow: isSelected
-                      ? "0 0 0 3px #0084ff"
-                      : isMe ? "0 2px 8px rgba(0,100,255,.25)" : "0 1px 4px rgba(0,0,0,.08)",
-                    transition: "all 0.15s",
-                  }}
-                  onMouseDown={() => handleLongPressStart(msg)}
-                  onMouseUp={handleLongPressEnd}
-                  onTouchStart={() => handleLongPressStart(msg)}
-                  onTouchEnd={handleLongPressEnd}
-                >
+                <div style={{
+                  ...S.bubble,
+                  background: isSelected ? (isDark ? "#2a1a1a" : "#ffebee")
+                    : isMe ? "linear-gradient(135deg,#0084ff,#0052cc)" : T.card,
+                  color: isMe && !isSelected ? "#fff" : T.text,
+                  borderRadius: isMe ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+                  boxShadow: isSelected ? "0 0 0 2px #ff4444"
+                    : isMe ? "0 2px 8px rgba(0,100,255,.25)" : `0 1px 4px rgba(0,0,0,${isDark ? ".3" : ".08"})`
+                }}>
                   <span style={S.bText}>{msg.text}</span>
-                  <span style={{ ...S.bTime, color: isMe ? "rgba(255,255,255,.6)" : "#ccc" }}>
-                    {msg.time}
-                    {isMe && <Ticks status={msg.status} />}
+                  <span style={{ ...S.bTime, color: isMe && !isSelected ? "rgba(255,255,255,.6)" : T.sub }}>
+                    {msg.time}{isMe && <Ticks status={msg.status} />}
                   </span>
                 </div>
               )}
@@ -281,23 +220,21 @@ function PrivateChat({ currentUser, selectedUser, onBack }) {
         {uploading && (
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
             <div style={S.uploadingBubble}>
-              <div style={S.uploadingSpinner} />
-              <span>Uploading...</span>
+              <div style={S.uploadingSpinner} /><span>Uploading...</span>
             </div>
           </div>
         )}
-
         <div ref={bottomRef} style={{ height: 10 }} />
       </div>
 
       {/* EMOJI PICKER */}
       {showEmoji && (
-        <div ref={emojiRef} style={S.emojiPicker}>
-          <div style={S.emojiTabs}>
+        <div ref={emojiRef} style={{ ...S.emojiPicker, background: T.card, borderTop: `1px solid ${T.border}` }}>
+          <div style={{ ...S.emojiTabs, borderBottom: `1px solid ${T.border}` }}>
             {Object.keys(EMOJI_CATEGORIES).map(cat => (
               <button key={cat} onClick={() => setActiveCategory(cat)} style={{
                 ...S.emojiTab,
-                background: activeCategory === cat ? "#e8f0fe" : "transparent",
+                background: activeCategory === cat ? (isDark ? "#1a2a3a" : "#e8f0fe") : "transparent",
                 borderBottom: activeCategory === cat ? "2px solid #0084ff" : "2px solid transparent",
               }}>
                 {cat.split(" ")[0]}
@@ -306,43 +243,52 @@ function PrivateChat({ currentUser, selectedUser, onBack }) {
           </div>
           <div style={S.emojiGrid}>
             {EMOJI_CATEGORIES[activeCategory].map((emoji, i) => (
-              <button key={i} onClick={() => addEmoji(emoji)} style={S.emojiBtn}>{emoji}</button>
+              <button key={i} onClick={() => { setNewMessage(p => p + emoji); inputRef.current?.focus(); }} style={S.emojiBtn}>
+                {emoji}
+              </button>
             ))}
           </div>
         </div>
       )}
 
       {/* INPUT BAR */}
-      <div style={S.inputBar}>
-        <button onClick={() => setShowEmoji(prev => !prev)} style={{ ...S.iconBtn, background: showEmoji ? "#e8f0fe" : "transparent", color: showEmoji ? "#0084ff" : "#aaa" }}>😊</button>
-        <button onClick={() => imageInputRef.current?.click()} style={{ ...S.iconBtn, color: "#aaa", fontSize: 20 }} disabled={uploading}>🖼️</button>
+      <div style={{ ...S.inputBar, background: T.card, borderTop: `1px solid ${T.border}` }}>
+        <button onClick={() => setShowEmoji(p => !p)} style={{ ...S.iconBtn, background: showEmoji ? (isDark ? "#1a2a3a" : "#e8f0fe") : "transparent", color: showEmoji ? "#0084ff" : T.sub }}>
+          😊
+        </button>
+        <button onClick={() => imageInputRef.current?.click()} style={{ ...S.iconBtn, color: T.sub, fontSize: 20 }} disabled={uploading}>
+          🖼️
+        </button>
         <input type="file" accept="image/*" ref={imageInputRef} style={{ display: "none" }} onChange={handleImageUpload} />
-        <input ref={inputRef} value={newMessage} onChange={e => setNewMessage(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage()} onFocus={() => setShowEmoji(false)} placeholder="Message likho..." style={S.input} />
-        <button onClick={sendMessage} style={{ ...S.sendBtn, background: newMessage.trim() ? "linear-gradient(135deg,#0084ff,#0052cc)" : "#e5e5e5" }}>
-          <span style={{ color: newMessage.trim() ? "white" : "#bbb", fontSize: 18 }}>➤</span>
+        <input
+          ref={inputRef} value={newMessage}
+          onChange={e => setNewMessage(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && sendMessage()}
+          onFocus={() => setShowEmoji(false)}
+          placeholder="Message likho..."
+          style={{ ...S.input, background: T.inputBg, color: T.text, border: `1.5px solid ${T.border}` }}
+        />
+        <button onClick={sendMessage} style={{
+          ...S.sendBtn,
+          background: newMessage.trim() ? "linear-gradient(135deg,#0084ff,#0052cc)" : (isDark ? "#2a2a2a" : "#e5e5e5")
+        }}>
+          <span style={{ color: newMessage.trim() ? "white" : T.sub, fontSize: 18 }}>➤</span>
         </button>
       </div>
 
-      {/* DELETE MODAL */}
+      {/* DELETE MENU */}
       {selectedMsg && (
         <div style={S.deleteOverlay} onClick={() => setSelectedMsg(null)}>
-          <div style={S.deleteModal} onClick={e => e.stopPropagation()}>
-            <div style={S.deleteTitle}>🗑️ Message Delete karo</div>
-            <div style={S.deleteSubt}>Kaise delete karna hai?</div>
-
-            <button onClick={() => deleteMessage(true)} style={S.deleteBtnRed}>
-              🗑️ Sab ke liye Delete
-              <span style={S.deleteBtnSub}>Dono ke chat se hata do</span>
-            </button>
-
-            <button onClick={() => deleteMessage(false)} style={S.deleteBtnGrey}>
-              👤 Sirf mere liye Delete
-              <span style={S.deleteBtnSub}>Sirf meri chat se hata do</span>
-            </button>
-
-            <button onClick={() => setSelectedMsg(null)} style={S.cancelBtn}>
-              Cancel
-            </button>
+          <div style={{ ...S.deleteMenu, background: T.card }} onClick={e => e.stopPropagation()}>
+            <div style={S.deleteHeader}>
+              <span style={{ ...S.deleteTitle, color: T.text }}>🗑️ Message Delete karo</span>
+              <span style={{ ...S.deletePreview, color: T.sub }}>
+                {selectedMsg.type === "image" ? "📷 Photo" : selectedMsg.text?.slice(0, 40)}
+              </span>
+            </div>
+            <button onClick={() => deleteMessage(true)} style={S.deleteForAll}>🗑️ Sab ke liye delete karo</button>
+            <button onClick={() => deleteMessage(false)} style={S.deleteForMe}>👤 Sirf mere liye delete karo</button>
+            <button onClick={() => setSelectedMsg(null)} style={{ ...S.cancelBtn, background: isDark ? "#2a2a2a" : "#f5f5f5", color: T.sub }}>✕ Cancel</button>
           </div>
         </div>
       )}
@@ -388,8 +334,11 @@ function color(str = "") {
   return list[Math.abs(h) % list.length];
 }
 
+const light = { bg: "#f0f2f5", card: "#fff", text: "#111", sub: "#aaa", border: "#eee", inputBg: "#f8f9fb" };
+const dark  = { bg: "#0f0f0f", card: "#1a1a1a", text: "#f0f0f0", sub: "#555", border: "#2a2a2a", inputBg: "#222" };
+
 const S = {
-  root: { display: "flex", flexDirection: "column", height: "100%", width: "100%", background: "#f0f2f5", overflow: "hidden", contain: "strict" },
+  root: { display: "flex", flexDirection: "column", height: "100%", width: "100%", overflow: "hidden", contain: "strict" },
   header: { position: "sticky", top: 0, zIndex: 10, flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", minHeight: 62, background: "linear-gradient(135deg,#0084ff 0%,#0052cc 100%)", boxShadow: "0 2px 10px rgba(0,100,255,.3)" },
   backBtn: { flexShrink: 0, width: 38, height: 38, background: "rgba(255,255,255,.18)", border: "none", borderRadius: 10, color: "white", fontSize: 28, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 },
   hAvatarWrap: { position: "relative", flexShrink: 0 },
@@ -403,35 +352,31 @@ const S = {
   empty: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, minHeight: 200, marginTop: 40 },
   msgAv: { width: 28, height: 28, borderRadius: "50%", objectFit: "cover" },
   msgAvFb: { width: 28, height: 28, borderRadius: "50%", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 },
-  bubble: { maxWidth: "100%", padding: "9px 13px", display: "inline-flex", alignItems: "flex-end", gap: 6, wordBreak: "break-word", userSelect: "none", cursor: "pointer" },
+  bubble: { maxWidth: "100%", padding: "9px 13px", display: "inline-flex", alignItems: "flex-end", gap: 6, wordBreak: "break-word", userSelect: "none" },
   bText: { fontSize: 15, lineHeight: 1.45, wordBreak: "break-word", whiteSpace: "pre-wrap" },
   bTime: { fontSize: 10, flexShrink: 0, marginBottom: 1, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center" },
-  imageBubble: { background: "#fff", overflow: "hidden", maxWidth: 220, cursor: "pointer", userSelect: "none" },
-  sharedImg: { width: "100%", maxWidth: 220, maxHeight: 260, objectFit: "cover", display: "block" },
+  imageBubble: { overflow: "hidden", maxWidth: 220 },
+  sharedImg: { width: "100%", maxWidth: 220, maxHeight: 260, objectFit: "cover", display: "block", cursor: "pointer" },
   imgTime: { display: "flex", alignItems: "center", gap: 4, padding: "4px 8px" },
   uploadingBubble: { background: "rgba(0,132,255,.1)", borderRadius: 12, padding: "8px 14px", display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#0084ff" },
   uploadingSpinner: { width: 16, height: 16, borderRadius: "50%", border: "2px solid #0084ff", borderTopColor: "transparent", animation: "spin 0.8s linear infinite" },
-  emojiPicker: { flexShrink: 0, background: "#fff", borderTop: "1px solid #eee", boxShadow: "0 -4px 16px rgba(0,0,0,.08)", zIndex: 5, height: 260, display: "flex", flexDirection: "column" },
-  emojiTabs: { display: "flex", overflowX: "auto", flexShrink: 0, borderBottom: "1px solid #f0f0f0", padding: "4px 8px 0", gap: 2 },
+  emojiPicker: { flexShrink: 0, zIndex: 5, height: 260, display: "flex", flexDirection: "column" },
+  emojiTabs: { display: "flex", overflowX: "auto", flexShrink: 0, padding: "4px 8px 0", gap: 2 },
   emojiTab: { border: "none", padding: "6px 10px", fontSize: 18, cursor: "pointer", borderRadius: "8px 8px 0 0", flexShrink: 0 },
-  emojiGrid: { flex: 1, overflowY: "auto", display: "flex", flexWrap: "wrap", padding: "8px", gap: 2 },
+  emojiGrid: { flex: 1, overflowY: "auto", display: "flex", flexWrap: "wrap", padding: "8px", gap: 2, WebkitOverflowScrolling: "touch" },
   emojiBtn: { background: "none", border: "none", fontSize: 24, cursor: "pointer", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8 },
-  inputBar: { position: "sticky", bottom: 0, zIndex: 10, flexShrink: 0, display: "flex", gap: 6, padding: "10px", background: "#fff", borderTop: "1px solid #eee", alignItems: "center", minHeight: 62, boxShadow: "0 -2px 8px rgba(0,0,0,.05)" },
-  iconBtn: { width: 38, height: 38, borderRadius: "50%", border: "none", fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "transparent" },
-  input: { flex: 1, padding: "11px 14px", borderRadius: 24, border: "1.5px solid #e0e0e0", fontSize: 16, outline: "none", background: "#f8f9fb", minWidth: 0 },
-  sendBtn: { width: 44, height: 44, borderRadius: "50%", border: "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" },
-
-  // Delete modal
-  deleteOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center", backdropFilter: "blur(2px)" },
-  deleteModal: { background: "#fff", borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 420, padding: "20px 16px", display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 -8px 30px rgba(0,0,0,.2)", animation: "slideUp 0.3s ease" },
-  deleteTitle: { fontSize: 17, fontWeight: 700, color: "#1a1a1a", textAlign: "center" },
-  deleteSubt: { fontSize: 13, color: "#aaa", textAlign: "center", marginBottom: 4 },
-  deleteBtnRed: { display: "flex", flexDirection: "column", alignItems: "flex-start", padding: "14px 16px", background: "#fff1f1", border: "1px solid #ffd5d5", borderRadius: 14, cursor: "pointer", fontSize: 15, fontWeight: 600, color: "#ff4444", gap: 2 },
-  deleteBtnGrey: { display: "flex", flexDirection: "column", alignItems: "flex-start", padding: "14px 16px", background: "#f5f5f5", border: "1px solid #e8e8e8", borderRadius: 14, cursor: "pointer", fontSize: 15, fontWeight: 600, color: "#555", gap: 2 },
-  deleteBtnSub: { fontSize: 12, fontWeight: 400, color: "#aaa" },
-  cancelBtn: { padding: "13px", background: "white", border: "1px solid #eee", borderRadius: 14, cursor: "pointer", fontSize: 15, fontWeight: 600, color: "#888", textAlign: "center" },
-
-  // Preview
+  inputBar: { position: "sticky", bottom: 0, zIndex: 10, flexShrink: 0, display: "flex", gap: 6, padding: "10px", alignItems: "center", minHeight: 62, boxShadow: "0 -2px 8px rgba(0,0,0,.05)" },
+  iconBtn: { width: 38, height: 38, borderRadius: "50%", border: "none", fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.2s" },
+  input: { flex: 1, padding: "11px 14px", borderRadius: 24, fontSize: 16, outline: "none", minWidth: 0 },
+  sendBtn: { width: 44, height: 44, borderRadius: "50%", border: "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer", transition: "background 0.2s" },
+  deleteOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" },
+  deleteMenu: { width: "100%", maxWidth: 420, borderRadius: "20px 20px 0 0", padding: "20px 16px 32px", display: "flex", flexDirection: "column", gap: 10, animation: "slideUp 0.25s ease" },
+  deleteHeader: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 6, padding: "0 4px" },
+  deleteTitle: { fontWeight: 700, fontSize: 16 },
+  deletePreview: { fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  deleteForAll: { padding: "14px", background: "#fff1f1", color: "#ff3b30", border: "1px solid #ffd5d5", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer", textAlign: "center" },
+  deleteForMe: { padding: "14px", background: "#f5f7ff", color: "#0084ff", border: "1px solid #d0e4ff", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer", textAlign: "center" },
+  cancelBtn: { padding: "14px", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer", textAlign: "center" },
   previewOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,.92)", zIndex: 1000, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" },
   previewClose: { position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.15)", border: "none", color: "white", width: 40, height: 40, borderRadius: "50%", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
   previewImg: { maxWidth: "95vw", maxHeight: "80vh", objectFit: "contain", borderRadius: 12 },
